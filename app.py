@@ -20,13 +20,23 @@ def sanitize_filename(name):
 
 
 def clean_column_names(df):
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+    df.columns = (
+        df.columns
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .str.replace(r"[^0-9a-zA-Z_]+", "_", regex=True)
+        .str.replace(r"_+", "_", regex=True)
+        .str.strip("_")
+    )
     return df
 
 
 def standardize_missing_values(df):
-    null_values = ["", " ", "na", "n/a", "nan", "none", "null", "undefined"]
-    return df.replace(null_values, np.nan)
+    null_values = ["na", "n/a", "nan", "none", "null", "undefined"]
+    cleaned = df.replace(null_values, np.nan, regex=False)
+    cleaned = cleaned.replace(r"^\s*$", np.nan, regex=True)
+    return cleaned
 
 
 def strip_string_columns(df):
@@ -37,6 +47,37 @@ def strip_string_columns(df):
     return df
 
 
+BOOLEAN_MAP = {
+    "yes": True,
+    "y": True,
+    "true": True,
+    "t": True,
+    "1": True,
+    "on": True,
+    "enabled": True,
+    "no": False,
+    "n": False,
+    "false": False,
+    "f": False,
+    "0": False,
+    "off": False,
+    "disabled": False,
+}
+
+
+def normalize_boolean_columns(df):
+    converted = []
+    for col in df.select_dtypes(include=["object"]).columns:
+        cleaned = df[col].astype(str).str.strip().str.lower()
+        mapped = cleaned.map(BOOLEAN_MAP).where(cleaned.isin(BOOLEAN_MAP.keys()), np.nan)
+        non_null = df[col].notna().sum()
+        valid = mapped.notna().sum()
+        if non_null > 0 and valid / non_null >= 0.65:
+            df[col] = mapped
+            converted.append(col)
+    return df, converted
+
+
 def convert_numeric_columns(df):
     converted = []
     for col in df.columns:
@@ -44,7 +85,10 @@ def convert_numeric_columns(df):
             cleaned = (
                 df[col]
                 .astype(str)
-                .str.replace(",", "", regex=False)
+                .str.strip()
+                .str.replace(r"[,¥$£€]", "", regex=True)
+                .str.replace(r"[\(\)]", "", regex=True)
+                .str.replace(r"[%]", "", regex=True)
                 .str.replace(r"[^0-9.\-]", "", regex=True)
             )
             numeric = pd.to_numeric(cleaned, errors="coerce")
@@ -59,7 +103,7 @@ def convert_numeric_columns(df):
 def convert_date_columns(df):
     converted = {}
     for col in df.columns:
-        if df[col].dtype == object:
+        if df[col].dtype == object or np.issubdtype(df[col].dtype, np.number):
             parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
             non_null = df[col].notna().sum()
             valid = parsed.notna().sum()
@@ -67,6 +111,12 @@ def convert_date_columns(df):
                 df[col] = parsed
                 converted[col] = non_null - valid
     return df, converted
+
+
+def drop_empty_columns(df):
+    before = len(df.columns)
+    df = df.dropna(axis=1, how="all")
+    return df, before - len(df.columns)
 
 
 def remove_duplicates(df):
@@ -187,8 +237,10 @@ if run:
     overall_stats = {
         "Files processed": 0,
         "Duplicate rows removed": 0,
+        "Columns converted to boolean": 0,
         "Columns converted to numeric": 0,
         "Columns converted to dates": 0,
+        "Columns dropped (empty)": 0,
         "Files saved": 0,
     }
 
@@ -230,8 +282,10 @@ if run:
             df = clean_column_names(df)
             df = standardize_missing_values(df)
             df = strip_string_columns(df)
+            df, bool_cols = normalize_boolean_columns(df)
             df, numeric_cols = convert_numeric_columns(df)
             df, date_cols = convert_date_columns(df)
+            df, dropped_cols = drop_empty_columns(df)
             df, removed_dupes = remove_duplicates(df)
             df = df.reset_index(drop=True)
 
@@ -240,8 +294,10 @@ if run:
             df.to_csv(cleaned_path, index=False)
 
             overall_stats["Duplicate rows removed"] += removed_dupes
+            overall_stats["Columns converted to boolean"] += len(bool_cols)
             overall_stats["Columns converted to numeric"] += len(numeric_cols)
             overall_stats["Columns converted to dates"] += len(date_cols)
+            overall_stats["Columns dropped (empty)"] += dropped_cols
             overall_stats["Files saved"] += 1
 
             summary_rows.append(
@@ -249,8 +305,10 @@ if run:
                     "file": fname,
                     "rows_before": rows_before,
                     "rows_after": len(df),
+                    "bool_columns": ", ".join(bool_cols) if bool_cols else "-",
                     "numeric_columns": ", ".join(numeric_cols) if numeric_cols else "-",
                     "date_columns": ", ".join(date_cols.keys()) if date_cols else "-",
+                    "dropped_empty_columns": dropped_cols,
                     "duplicates_removed": removed_dupes,
                     "cleaned_path": cleaned_path,
                 }
@@ -259,6 +317,13 @@ if run:
             progress_bar.progress(i / len(files_to_process))
 
         st.success("Cleaning finished ✅")
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Files processed", overall_stats["Files processed"])
+        metric_cols[1].metric("Duplicate rows removed", overall_stats["Duplicate rows removed"])
+        metric_cols[2].metric("Empty columns dropped", overall_stats["Columns dropped (empty)"])
+
+        st.markdown("---")
+
         st.subheader("Summary (per file)")
         st.table(pd.DataFrame(summary_rows))
 
