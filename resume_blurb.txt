@@ -1,9 +1,0 @@
-DataRefinery — Streamlit Data Cleaning Toolkit
-
-Technologies: Python, pandas, Streamlit, Excel/CSV
-
-- Built an interactive Streamlit application that automates data cleaning and preparation for CSV/XLSX datasets with a single click.
-- Implemented robust cleaning pipelines: standardized column naming, missing-value normalization, type conversion (numeric and dates), duplicate removal, and filename sanitization.
-- Designed a user-friendly UI allowing file upload, folder processing, and one-click cleaning with downloadable cleaned files and a summary report.
-- Organized the codebase into modular components to separate UI and processing logic, improving maintainability and extensibility.
-- Demonstrated measurable data quality improvements and accelerated analyst workflows by automating repetitive preprocessing tasks.
