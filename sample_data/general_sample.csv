@@ -1,0 +1,5 @@
+Name,Email,Phone,JoinDate,Revenue,Status
+Alice,a@example.com,555-1234,2024-01-10,1500.50,Active
+Bob,b@example.com,555-5678,01/15/2024,1200,Inactive
+Charlie,c@example.com,,2024-02-05,not available,Active
+Alice,a@example.com,555-1234,2024-01-10,1500.50,Active

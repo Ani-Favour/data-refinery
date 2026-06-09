@@ -31,7 +31,9 @@ Then open the app in your browser at `http://localhost:8501`.
 
 ## Sample data
 
-Two sample datasets are included in `raw_data/` for quick testing: `microfinance_sample.csv` and `general_sample.csv`.
+Two sample datasets are included in `sample_data/` for quick testing: `microfinance_sample.csv` and `general_sample.csv`.
+
+Copy files from `sample_data/` into `raw_data/` to process them with the app, or upload them directly through the app UI.
 
 ## Publish to GitHub
 

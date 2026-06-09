@@ -1,0 +1,6 @@
+Branch,CustomerID,LoanAmount,DisbursementDate,Status,Notes
+Lagos,1001,50000,2024-01-15,active,"Needs follow-up"
+Abuja,1002,30000,15/02/2024,closed,"Paid"
+Enugu,1003,,2024-03-10,active,""
+Lagos,1004,45000,2024-02-28,active,"On hold"
+Abuja,1002,30000,15/02/2024,closed,"Paid"

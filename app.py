@@ -84,20 +84,32 @@ def create_report_text(stats):
 
 # ---------- App UI ----------
 st.set_page_config(page_title="DataRefinery", layout="wide")
-st.title("DataRefinery — Data Cleaning Toolkit")
 
 st.markdown(
-    "This app cleans raw datasets automatically. Upload CSV/XLSX files or place them into `raw_data/`, then click the button to clean all files in one step."
+    "<style>\n    .main-header {background: linear-gradient(90deg, #0b3d91, #0c6fb1); padding: 24px; border-radius: 12px; color: white; margin-bottom: 20px;}\n    .main-header h1 {margin: 0; font-size: 2.4rem;}\n    .main-header p {margin: 4px 0 0; font-size: 1.1rem; opacity: 0.9;}\n    .metric-card {background: #f5f8ff; padding: 18px; border-radius: 12px; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08); margin-bottom: 16px;}\n    .metric-card h3 {margin: 0 0 8px;}\n    </style>",
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    "<div class='main-header'><h1>DataRefinery</h1><p>Professional data cleaning toolkit for CSV and Excel datasets — one click to clean and export analysis-ready data.</p></div>",
+    unsafe_allow_html=True,
 )
 
 # Sidebar
 with st.sidebar:
     st.header("DataRefinery")
-    st.write("Automatic data cleaning toolkit")
+    st.write("Professional data cleaning for CSV/XLSX datasets")
     st.markdown("**Quick steps:**")
-    st.markdown("1. Upload files or place them into `raw_data/`\n2. Choose input mode\n3. Click **Run Data Cleaner (single click)**")
+    st.markdown(
+        "1. Upload files or place them into `raw_data/`\n"
+        "2. Choose input mode\n"
+        "3. Click **Run Data Cleaner (single click)**"
+    )
     st.markdown("---")
-    st.write("Included sample data: `microfinance_sample.csv`, `general_sample.csv`")
+    st.markdown("**Included sample data**")
+    st.markdown("- `microfinance_sample.csv`\n- `general_sample.csv`\n- `sample_data/` folder for additional examples")
+    st.markdown("---")
+    st.write("Use the app to standardize columns, normalize missing values, convert types, and remove duplicates.")
 
 input_mode = st.radio("Input mode", ("Upload files (recommended)", "Process files in raw_data folder"))
 
