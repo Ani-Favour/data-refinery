@@ -1,6 +1,6 @@
-# General Data Cleaner
+# DataRefinery
 
-A Streamlit app for cleaning raw data files automatically. This tool can process general CSV and Excel datasets using one-click cleaning rules.
+A Streamlit toolkit for automated data cleaning and preparation. DataRefinery processes CSV and Excel datasets using configurable, one-click cleaning rules to standardize, validate, and export analysis-ready data.
 
 ## Project structure
 

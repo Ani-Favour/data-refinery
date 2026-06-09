@@ -83,8 +83,8 @@ def create_report_text(stats):
 
 
 # ---------- App UI ----------
-st.set_page_config(page_title="General Data Cleaner", layout="wide")
-st.title("General Data Cleaner — Single-Click Data Cleaning")
+st.set_page_config(page_title="DataRefinery", layout="wide")
+st.title("DataRefinery — Data Cleaning Toolkit")
 
 st.markdown(
     "This app cleans raw datasets automatically. Upload CSV/XLSX files or place them into `raw_data/`, then click the button to clean all files in one step."
