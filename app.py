@@ -85,33 +85,92 @@ def create_report_text(stats):
 # ---------- App UI ----------
 st.set_page_config(page_title="DataRefinery", layout="wide")
 
+theme_choice = st.sidebar.selectbox("UI theme", ["Light", "Dark"], index=0)
+
+theme_class = "theme-dark" if theme_choice == "Dark" else "theme-light"
+
 st.markdown(
-    "<style>\n    .main-header {background: linear-gradient(90deg, #0b3d91, #0c6fb1); padding: 24px; border-radius: 12px; color: white; margin-bottom: 20px;}\n    .main-header h1 {margin: 0; font-size: 2.4rem;}\n    .main-header p {margin: 4px 0 0; font-size: 1.1rem; opacity: 0.9;}\n    .metric-card {background: #f5f8ff; padding: 18px; border-radius: 12px; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08); margin-bottom: 16px;}\n    .metric-card h3 {margin: 0 0 8px;}\n    </style>",
+    f"""
+    <style>
+    :root {{
+        --bg: {'#0f172a' if theme_choice == 'Dark' else '#f8fafc'};
+        --surface: {'#111827' if theme_choice == 'Dark' else '#ffffff'};
+        --surface-alt: {'#1f2937' if theme_choice == 'Dark' else '#f8fafc'};
+        --text: {'#f8fafc' if theme_choice == 'Dark' else '#0f172a'};
+        --muted: {'#cbd5e1' if theme_choice == 'Dark' else '#475569'};
+        --border: {'rgba(148, 163, 184, 0.12)' if theme_choice == 'Dark' else 'rgba(15, 23, 42, 0.08)'};
+        --accent: {'#38bdf8' if theme_choice == 'Dark' else '#0b69ff'};
+        --icon-bg: {'rgba(56, 189, 248, 0.16)' if theme_choice == 'Dark' else 'rgba(11, 105, 255, 0.12)'};
+        --button-bg: {'#0ea5e9' if theme_choice == 'Dark' else '#0b69ff'};
+        --button-text: #ffffff;
+    }}
+
+    body {{ background: var(--bg); color: var(--text); }}
+    .css-18e3th9 {{ background-color: var(--bg) !important; }}
+    .css-1oe6wy5 {{ background-color: var(--bg) !important; }}
+    .css-1d391kg {{ color: var(--text) !important; }}
+    .main-header {{ background: linear-gradient(90deg, rgba(11,111,177,0.95), rgba(6,66,132,0.95)); padding: 26px; border-radius: 18px; color: white; margin-bottom: 22px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18); }}
+    .main-header h1 {{ margin: 0; font-size: 2.6rem; }}
+    .main-header p {{ margin: 6px 0 0; font-size: 1.05rem; opacity: 0.94; line-height: 1.65; }}
+    .section-card {{ background: var(--surface); color: var(--text); padding: 22px; border-radius: 18px; border: 1px solid var(--border); box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08); margin-bottom: 18px; }}
+    .section-card h3 {{ margin: 0 0 10px; font-size: 1.15rem; }}
+    .section-card p {{ margin: 0; color: var(--muted); line-height: 1.7; }}
+    .card-icon {{ width: 48px; height: 48px; display: inline-flex; align-items: center; justify-content: center; border-radius: 14px; margin-bottom: 14px; font-size: 1.35rem; background: var(--icon-bg); color: var(--accent); }}
+    .stButton>button {{ background-color: var(--button-bg) !important; color: var(--button-text) !important; border-radius: 12px !important; padding: 0.85rem 1.4rem !important; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12) !important; }}
+    .stSidebar {{ background: var(--surface-alt) !important; }}
+    .sidebar .stTextInput>div>input, .sidebar .stSelectbox>div>div>div>div, .sidebar .stRadio>div>label {{ background: var(--surface) !important; color: var(--text) !important; }}
+    .stDownloadButton>button {{ border-radius: 12px !important; }}
+    </style>
+    <script>
+    const body = document.querySelector('body');
+    if (body) {{ body.classList.remove('theme-light', 'theme-dark'); body.classList.add('{theme_class}'); }}
+    </script>
+    """,
     unsafe_allow_html=True,
 )
 
 st.markdown(
-    "<div class='main-header'><h1>DataRefinery</h1><p>Professional data cleaning toolkit for CSV and Excel datasets — one click to clean and export analysis-ready data.</p></div>",
+    "<div class='main-header'><h1>DataRefinery</h1><p>Clean, standardize, and export data faster with an intuitive one-click workflow for CSV and Excel datasets.</p></div>",
     unsafe_allow_html=True,
 )
 
-# Sidebar
 with st.sidebar:
     st.header("DataRefinery")
     st.write("Professional data cleaning for CSV/XLSX datasets")
-    st.markdown("**Quick steps:**")
+    st.markdown("**Theme:**")
+    st.caption("Choose your display mode for the dashboard.")
+    st.markdown("---")
+    st.markdown("**Quick build workflow**")
     st.markdown(
         "1. Upload files or place them into `raw_data/`\n"
-        "2. Choose input mode\n"
-        "3. Click **Run Data Cleaner (single click)**"
+        "2. Select input mode\n"
+        "3. Click **Run Data Cleaner**"
     )
     st.markdown("---")
-    st.markdown("**Included sample data**")
-    st.markdown("- `microfinance_sample.csv`\n- `general_sample.csv`\n- `sample_data/` folder for additional examples")
+    st.markdown("**Sample data available**")
+    st.markdown("- `microfinance_sample.csv`\n- `general_sample.csv`\n- `sample_data/` folder for examples")
     st.markdown("---")
-    st.write("Use the app to standardize columns, normalize missing values, convert types, and remove duplicates.")
+    st.write("This tool standardizes columns, normalizes missing values, converts data types, and removes duplicate rows.")
 
 input_mode = st.radio("Input mode", ("Upload files (recommended)", "Process files in raw_data folder"))
+
+st.markdown("---")
+cols = st.columns(3)
+with cols[0]:
+    st.markdown(
+        "<div class='section-card'><div class='card-icon'>⚡</div><h3>Fast data readiness</h3><p>Auto-detect dirty inputs and convert inconsistent values into clean, analysis-ready columns.</p></div>",
+        unsafe_allow_html=True,
+    )
+with cols[1]:
+    st.markdown(
+        "<div class='section-card'><div class='card-icon'>🧹</div><h3>Smart cleaning engine</h3><p>Standardizes missing values, trims whitespace, converts numeric fields, and parses dates intelligently.</p></div>",
+        unsafe_allow_html=True,
+    )
+with cols[2]:
+    st.markdown(
+        "<div class='section-card'><div class='card-icon'>📥</div><h3>One-click export</h3><p>Save cleaned CSV output automatically and download reports for audit-ready transparency.</p></div>",
+        unsafe_allow_html=True,
+    )
 
 uploaded_files = None
 if input_mode == "Upload files (recommended)":
