@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import os
 import re
+import unicodedata
 from datetime import datetime
 
 # --- Paths ---
@@ -67,6 +68,23 @@ def strip_string_columns(df):
     return df
 
 
+def normalize_unicode_text(df):
+    object_cols = df.select_dtypes(include=["object"]).columns
+    for col in object_cols:
+        def normalize_value(value):
+            if pd.isna(value):
+                return value
+            text = str(value)
+            normalized = unicodedata.normalize("NFKC", text)
+            normalized = normalized.encode("ascii", "ignore").decode("ascii")
+            return normalized
+
+        df[col] = df[col].map(normalize_value)
+        df[col] = df[col].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
+        df.loc[df[col] == "", col] = np.nan
+    return df
+
+
 BOOLEAN_MAP = {
     "yes": True,
     "y": True,
@@ -125,6 +143,8 @@ def convert_date_columns(df, threshold=0.65):
     for col in df.columns:
         if df[col].dtype == object or np.issubdtype(df[col].dtype, np.number):
             parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
+            if parsed.notna().sum() / max(df[col].notna().sum(), 1) < threshold:
+                parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True, dayfirst=True)
             non_null = df[col].notna().sum()
             valid = parsed.notna().sum()
             if non_null > 0 and valid / non_null >= threshold:
@@ -137,6 +157,12 @@ def drop_empty_columns(df):
     before = len(df.columns)
     df = df.dropna(axis=1, how="all")
     return df, before - len(df.columns)
+
+
+def drop_constant_columns(df):
+    constant_cols = [col for col in df.columns if df[col].nunique(dropna=True) <= 1]
+    df = df.drop(columns=constant_cols)
+    return df, len(constant_cols)
 
 
 def read_data_file(path):
@@ -154,12 +180,14 @@ def clean_dataframe(df, threshold=0.65):
     df = clean_column_names(df)
     df = standardize_missing_values(df)
     df = strip_string_columns(df)
+    df = normalize_unicode_text(df)
     df, bool_cols = normalize_boolean_columns(df, threshold)
     df, numeric_cols = convert_numeric_columns(df, threshold)
     df, date_cols = convert_date_columns(df, threshold)
-    df, dropped_cols = drop_empty_columns(df)
+    df, dropped_empty = drop_empty_columns(df)
+    df, dropped_constant = drop_constant_columns(df)
     df, removed_dupes = remove_duplicates(df)
-    return df, bool_cols, numeric_cols, date_cols, dropped_cols, removed_dupes
+    return df, bool_cols, numeric_cols, date_cols, dropped_empty, dropped_constant, removed_dupes
 
 
 def remove_duplicates(df):
@@ -296,6 +324,7 @@ if run:
         "Columns converted to numeric": 0,
         "Columns converted to dates": 0,
         "Columns dropped (empty)": 0,
+        "Columns dropped (constant)": 0,
         "Files saved": 0,
     }
 
@@ -331,7 +360,7 @@ if run:
             overall_stats["Files processed"] += 1
             rows_before = len(df)
 
-            df, bool_cols, numeric_cols, date_cols, dropped_cols, removed_dupes = clean_dataframe(df, threshold / 100)
+            df, bool_cols, numeric_cols, date_cols, dropped_empty, dropped_constant, removed_dupes = clean_dataframe(df, threshold / 100)
             df = df.reset_index(drop=True)
 
             cleaned_name = f"cleaned_{sanitize_filename(fname.rsplit('.', 1)[0])}.csv"
@@ -342,7 +371,8 @@ if run:
             overall_stats["Columns converted to boolean"] += len(bool_cols)
             overall_stats["Columns converted to numeric"] += len(numeric_cols)
             overall_stats["Columns converted to dates"] += len(date_cols)
-            overall_stats["Columns dropped (empty)"] += dropped_cols
+            overall_stats["Columns dropped (empty)"] += dropped_empty
+            overall_stats["Columns dropped (constant)"] += dropped_constant
             overall_stats["Files saved"] += 1
 
             summary_rows.append(
@@ -353,17 +383,19 @@ if run:
                     "bool_columns": ", ".join(bool_cols) if bool_cols else "-",
                     "numeric_columns": ", ".join(numeric_cols) if numeric_cols else "-",
                     "date_columns": ", ".join(date_cols.keys()) if date_cols else "-",
-                    "dropped_empty_columns": dropped_cols,
+                    "dropped_empty_columns": dropped_empty,
+                    "dropped_constant_columns": dropped_constant,
                     "duplicates_removed": removed_dupes,
                     "cleaned_path": cleaned_path,
                 }
             )
             progress_bar.progress(i / len(files_to_process))
 
-        metric_cols = st.columns(3)
+        metric_cols = st.columns(4)
         metric_cols[0].metric("Files processed", overall_stats["Files processed"])
         metric_cols[1].metric("Duplicate rows removed", overall_stats["Duplicate rows removed"])
         metric_cols[2].metric("Empty columns dropped", overall_stats["Columns dropped (empty)"])
+        metric_cols[3].metric("Constant columns dropped", overall_stats["Columns dropped (constant)"])
 
         st.markdown("---")
 
