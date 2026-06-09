@@ -90,6 +90,15 @@ st.markdown(
     "This app cleans raw datasets automatically. Upload CSV/XLSX files or place them into `raw_data/`, then click the button to clean all files in one step."
 )
 
+# Sidebar
+with st.sidebar:
+    st.header("DataRefinery")
+    st.write("Automatic data cleaning toolkit")
+    st.markdown("**Quick steps:**")
+    st.markdown("1. Upload files or place them into `raw_data/`\n2. Choose input mode\n3. Click **Run Data Cleaner (single click)**")
+    st.markdown("---")
+    st.write("Included sample data: `microfinance_sample.csv`, `general_sample.csv`")
+
 input_mode = st.radio("Input mode", ("Upload files (recommended)", "Process files in raw_data folder"))
 
 uploaded_files = None
