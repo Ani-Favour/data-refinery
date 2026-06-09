@@ -5,7 +5,26 @@ import numpy as np
 import os
 import re
 import unicodedata
+import json
 from datetime import datetime
+from io import BytesIO, StringIO
+import warnings
+warnings.filterwarnings('ignore')
+
+try:
+    from data_quality import (
+        DataQualityProfiler,
+        AdvancedDataTypeDetector,
+        OutlierDetector,
+        TextCleaningAdvanced,
+        ImputationStrategies,
+        FuzzyDeduplication,
+        DataQualityReport,
+    )
+    ADVANCED_FEATURES = True
+except ImportError:
+    ADVANCED_FEATURES = False
+    st.warning("Advanced data quality features not available. Install required packages.")
 
 # --- Paths ---
 RAW_FOLDER = "raw_data"
@@ -48,15 +67,28 @@ def clean_column_names(df):
 
 
 def standardize_missing_values(df):
-    null_values = ["na", "n/a", "nan", "none", "null", "undefined", "missing", "not available", "unknown"]
+    null_values = [
+        "na", "n/a", "nan", "none", "null", "undefined", "missing", "not available", "unknown",
+        "n.a.", "na.", "n/a.", "--", "---", ".", "..", "...", "no data", "no value",
+        "unknown", "unknown value", "not provided", "not applicable", "tbd", "todo",
+    ]
     cleaned = df.replace(null_values, np.nan, regex=False)
-    cleaned = cleaned.replace(r"^(?:\s+|-|--|na|n/a|not available|unknown|missing|none|null|undefined)$", np.nan, regex=True)
+    cleaned = cleaned.replace(
+        r"^(?:\s+|-|--|na|n/a|not available|unknown|missing|none|null|undefined|n\.a\.|na\.|n/a\.|no data|no value|not provided|not applicable|tbd|todo)$",
+        np.nan, regex=True
+    )
     return cleaned
 
 
 def strip_string_columns(df):
+    """Enhanced string stripping with text cleaning."""
     object_cols = df.select_dtypes(include=["object"]).columns
     for col in object_cols:
+        # Remove HTML/XML tags if advanced features available
+        if ADVANCED_FEATURES:
+            df[col] = df[col].apply(lambda x: TextCleaningAdvanced.remove_html_tags(x) if isinstance(x, str) else x)
+            df[col] = df[col].apply(lambda x: TextCleaningAdvanced.remove_non_printable(x) if isinstance(x, str) else x)
+        
         df[col] = (
             df[col]
             .astype(str)
@@ -139,12 +171,22 @@ def convert_numeric_columns(df, threshold=0.65):
 
 
 def convert_date_columns(df, threshold=0.65):
+    """Enhanced date conversion with multiple format detection."""
     converted = {}
     for col in df.columns:
         if df[col].dtype == object or np.issubdtype(df[col].dtype, np.number):
-            parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
+            # Try multiple date formats
+            parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True, utc=False)
+            
             if parsed.notna().sum() / max(df[col].notna().sum(), 1) < threshold:
                 parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True, dayfirst=True)
+            
+            if parsed.notna().sum() / max(df[col].notna().sum(), 1) < threshold:
+                try:
+                    parsed = pd.to_datetime(df[col], errors="coerce", format='%Y-%m-%d')
+                except:
+                    pass
+            
             non_null = df[col].notna().sum()
             valid = parsed.notna().sum()
             if non_null > 0 and valid / non_null >= threshold:
@@ -165,29 +207,71 @@ def drop_constant_columns(df):
     return df, len(constant_cols)
 
 
-def read_data_file(path):
-    if path.lower().endswith(".csv"):
-        try:
-            return pd.read_csv(path, encoding="utf-8")
-        except Exception:
-            return pd.read_csv(path, encoding="latin-1")
-    if path.lower().endswith((".xlsx", ".xls")):
-        return pd.read_excel(path)
-    raise ValueError("Unsupported file type")
+def read_data_file(path: str) -> pd.DataFrame:
+    """Read data from multiple file formats with automatic encoding detection."""
+    try:
+        if path.lower().endswith(".csv"):
+            try:
+                return pd.read_csv(path, encoding="utf-8")
+            except UnicodeDecodeError:
+                return pd.read_csv(path, encoding="latin-1")
+            except UnicodeDecodeError:
+                return pd.read_csv(path, encoding="iso-8859-1")
+        
+        elif path.lower().endswith((".xlsx", ".xls")):
+            return pd.read_excel(path)
+        
+        elif path.lower().endswith(".json"):
+            return pd.read_json(path)
+        
+        elif path.lower().endswith(".parquet"):
+            return pd.read_parquet(path)
+        
+        elif path.lower().endswith(".feather"):
+            return pd.read_feather(path)
+        
+        elif path.lower().endswith((".txt", ".tsv")):
+            return pd.read_csv(path, sep="\t", encoding="utf-8")
+        
+        else:
+            raise ValueError(f"Unsupported file type: {path}")
+    except Exception as e:
+        raise ValueError(f"Failed to read file: {str(e)}")
 
 
-def clean_dataframe(df, threshold=0.65):
+def clean_dataframe(df, threshold=0.65, enable_advanced=True):
+    """Comprehensive enterprise-grade data cleaning pipeline."""
+    cleaning_log = {}
+    df_original = df.copy()
+    
     df = clean_column_names(df)
     df = standardize_missing_values(df)
     df = strip_string_columns(df)
     df = normalize_unicode_text(df)
+    
+    # Detect and classify advanced data types if enabled
+    advanced_types = {}
+    if ADVANCED_FEATURES and enable_advanced:
+        for col in df.select_dtypes(include=['object']).columns:
+            if AdvancedDataTypeDetector.detect_emails(df[col]):
+                advanced_types[col] = 'email'
+            elif AdvancedDataTypeDetector.detect_phone_numbers(df[col]):
+                advanced_types[col] = 'phone'
+            elif AdvancedDataTypeDetector.detect_urls(df[col]):
+                advanced_types[col] = 'url'
+            elif AdvancedDataTypeDetector.detect_postal_codes(df[col]):
+                advanced_types[col] = 'postal_code'
+            elif AdvancedDataTypeDetector.detect_uuids(df[col]):
+                advanced_types[col] = 'uuid'
+    
     df, bool_cols = normalize_boolean_columns(df, threshold)
     df, numeric_cols = convert_numeric_columns(df, threshold)
     df, date_cols = convert_date_columns(df, threshold)
     df, dropped_empty = drop_empty_columns(df)
     df, dropped_constant = drop_constant_columns(df)
     df, removed_dupes = remove_duplicates(df)
-    return df, bool_cols, numeric_cols, date_cols, dropped_empty, dropped_constant, removed_dupes
+    
+    return df, bool_cols, numeric_cols, date_cols, dropped_empty, dropped_constant, removed_dupes, advanced_types
 
 
 def remove_duplicates(df):
@@ -308,12 +392,23 @@ with cols[2]:
 uploaded_files = None
 if input_mode == "Upload files (recommended)":
     uploaded_files = st.file_uploader(
-        "Upload CSV or Excel files",
-        type=["csv", "xlsx"],
+        "Upload data files (CSV, XLSX, JSON, Parquet, TSV, TXT)",
+        type=["csv", "xlsx", "xls", "json", "parquet", "feather", "txt", "tsv"],
         accept_multiple_files=True,
     )
 
-run = st.button("Run Data Cleaner (single click)")
+# Advanced options
+st.markdown("---")
+st.subheader("⚙️ Advanced Options")
+col1, col2, col3 = st.columns(3)
+with col1:
+    enable_quality_scoring = st.checkbox("Calculate quality scores", value=True, help="Generate data quality metrics")
+with col2:
+    detect_outliers = st.checkbox("Detect outliers", value=False, help="Use IQR method to flag outliers")
+with col3:
+    outlier_method = st.selectbox("Outlier method", ["IQR", "Z-Score", "Isolation Forest"], disabled=not detect_outliers) if ADVANCED_FEATURES else "IQR"
+
+run = st.button("🚀 Run Data Cleaner (enterprise grade)")
 
 if run:
     summary_rows = []
@@ -323,10 +418,14 @@ if run:
         "Columns converted to boolean": 0,
         "Columns converted to numeric": 0,
         "Columns converted to dates": 0,
+        "Advanced types detected": 0,
         "Columns dropped (empty)": 0,
         "Columns dropped (constant)": 0,
         "Files saved": 0,
     }
+    
+    quality_scores_before = []
+    quality_scores_after = []
 
     files_to_process = []
     if input_mode == "Upload files (recommended)":
@@ -337,13 +436,21 @@ if run:
                 try:
                     if uploaded.name.lower().endswith(".csv"):
                         df = pd.read_csv(uploaded)
-                    else:
+                    elif uploaded.name.lower().endswith((".xlsx", ".xls")):
                         df = pd.read_excel(uploaded)
+                    elif uploaded.name.lower().endswith(".json"):
+                        df = pd.read_json(uploaded)
+                    elif uploaded.name.lower().endswith(".parquet"):
+                        df = pd.read_parquet(uploaded)
+                    elif uploaded.name.lower().endswith(".feather"):
+                        df = pd.read_feather(uploaded)
+                    else:
+                        df = pd.read_csv(uploaded, sep="\t")
                     files_to_process.append((uploaded.name, df))
                 except Exception as e:
                     st.error(f"Failed to read {uploaded.name}: {e}")
     else:
-        raw_files = [f for f in os.listdir(RAW_FOLDER) if f.lower().endswith((".csv", ".xlsx", ".xls"))]
+        raw_files = [f for f in os.listdir(RAW_FOLDER) if f.lower().endswith((".csv", ".xlsx", ".xls", ".json", ".parquet", ".feather", ".txt", ".tsv"))]
         if not raw_files:
             st.warning("No files found in the raw_data folder.")
         for fname in raw_files:
@@ -356,12 +463,30 @@ if run:
 
     if files_to_process:
         progress_bar = st.progress(0)
+        status_placeholder = st.empty()
+        
         for i, (fname, df) in enumerate(files_to_process, start=1):
+            status_placeholder.info(f"Processing {fname}... ({i}/{len(files_to_process)})")
+            
             overall_stats["Files processed"] += 1
             rows_before = len(df)
+            
+            # Calculate quality score before cleaning
+            quality_score_before = 0
+            if ADVANCED_FEATURES and enable_quality_scoring:
+                profile_before = DataQualityProfiler.profile_dataframe(df)
+                quality_score_before = DataQualityProfiler.calculate_overall_quality_score(profile_before)
+                quality_scores_before.append(quality_score_before)
 
-            df, bool_cols, numeric_cols, date_cols, dropped_empty, dropped_constant, removed_dupes = clean_dataframe(df, threshold / 100)
+            df, bool_cols, numeric_cols, date_cols, dropped_empty, dropped_constant, removed_dupes, advanced_types = clean_dataframe(df, threshold / 100)
             df = df.reset_index(drop=True)
+            
+            # Calculate quality score after cleaning
+            quality_score_after = 0
+            if ADVANCED_FEATURES and enable_quality_scoring:
+                profile_after = DataQualityProfiler.profile_dataframe(df)
+                quality_score_after = DataQualityProfiler.calculate_overall_quality_score(profile_after)
+                quality_scores_after.append(quality_score_after)
 
             cleaned_name = f"cleaned_{sanitize_filename(fname.rsplit('.', 1)[0])}.csv"
             cleaned_path = os.path.join(CLEANED_FOLDER, cleaned_name)
@@ -371,6 +496,7 @@ if run:
             overall_stats["Columns converted to boolean"] += len(bool_cols)
             overall_stats["Columns converted to numeric"] += len(numeric_cols)
             overall_stats["Columns converted to dates"] += len(date_cols)
+            overall_stats["Advanced types detected"] += len(advanced_types)
             overall_stats["Columns dropped (empty)"] += dropped_empty
             overall_stats["Columns dropped (constant)"] += dropped_constant
             overall_stats["Files saved"] += 1
@@ -380,9 +506,12 @@ if run:
                     "file": fname,
                     "rows_before": rows_before,
                     "rows_after": len(df),
+                    "quality_before": f"{quality_score_before:.1f}" if quality_score_before > 0 else "N/A",
+                    "quality_after": f"{quality_score_after:.1f}" if quality_score_after > 0 else "N/A",
                     "bool_columns": ", ".join(bool_cols) if bool_cols else "-",
                     "numeric_columns": ", ".join(numeric_cols) if numeric_cols else "-",
                     "date_columns": ", ".join(date_cols.keys()) if date_cols else "-",
+                    "advanced_types": ", ".join(set(advanced_types.values())) if advanced_types else "-",
                     "dropped_empty_columns": dropped_empty,
                     "dropped_constant_columns": dropped_constant,
                     "duplicates_removed": removed_dupes,
@@ -390,22 +519,52 @@ if run:
                 }
             )
             progress_bar.progress(i / len(files_to_process))
-
-        metric_cols = st.columns(4)
-        metric_cols[0].metric("Files processed", overall_stats["Files processed"])
-        metric_cols[1].metric("Duplicate rows removed", overall_stats["Duplicate rows removed"])
-        metric_cols[2].metric("Empty columns dropped", overall_stats["Columns dropped (empty)"])
-        metric_cols[3].metric("Constant columns dropped", overall_stats["Columns dropped (constant)"])
-
+        
+        status_placeholder.success("✅ All files processed successfully!")
         st.markdown("---")
 
-        st.subheader("Summary (per file)")
-        st.table(pd.DataFrame(summary_rows))
+        # Display quality score improvements
+        if quality_scores_before and enable_quality_scoring:
+            quality_tabs = st.tabs(["📊 Quality Metrics", "📈 Summary", "📥 Downloads"])
+            
+            with quality_tabs[0]:
+                metric_cols = st.columns(4)
+                metric_cols[0].metric("Avg Quality (Before)", f"{np.mean(quality_scores_before):.1f}", help="Overall data quality score before cleaning")
+                metric_cols[1].metric("Avg Quality (After)", f"{np.mean(quality_scores_after):.1f}", help="Overall data quality score after cleaning")
+                improvement = np.mean(quality_scores_after) - np.mean(quality_scores_before)
+                metric_cols[2].metric("Quality Improvement", f"{improvement:+.1f}", help="Change in quality score")
+                metric_cols[3].metric("Files Cleaned", overall_stats["Files processed"])
+            
+            with quality_tabs[1]:
+                metric_cols_summary = st.columns(4)
+                metric_cols_summary[0].metric("Files processed", overall_stats["Files processed"])
+                metric_cols_summary[1].metric("Duplicate rows removed", overall_stats["Duplicate rows removed"])
+                metric_cols_summary[2].metric("Empty columns dropped", overall_stats["Columns dropped (empty)"])
+                metric_cols_summary[3].metric("Constant columns dropped", overall_stats["Columns dropped (constant)"])
+            
+            with quality_tabs[2]:
+                st.subheader("Summary (per file)")
+                st.table(pd.DataFrame(summary_rows))
+                
+                st.subheader("Overall stats")
+                st.json(overall_stats)
+        
+        else:
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Files processed", overall_stats["Files processed"])
+            metric_cols[1].metric("Duplicate rows removed", overall_stats["Duplicate rows removed"])
+            metric_cols[2].metric("Empty columns dropped", overall_stats["Columns dropped (empty)"])
+            metric_cols[3].metric("Constant columns dropped", overall_stats["Columns dropped (constant)"])
+            
+            st.markdown("---")
+            st.subheader("Summary (per file)")
+            st.table(pd.DataFrame(summary_rows))
+            
+            st.subheader("Overall stats")
+            st.json(overall_stats)
 
-        st.subheader("Overall stats")
-        st.json(overall_stats)
-
-        st.markdown("### Download cleaned files")
+        st.markdown("---")
+        st.markdown("### 📥 Download cleaned files")
         for row in summary_rows:
             with open(row["cleaned_path"], "rb") as f:
                 data_bytes = f.read()
@@ -418,7 +577,7 @@ if run:
 
         report_text = create_report_text(overall_stats)
         st.download_button(
-            label="Download cleaning report (txt)",
+            label="📄 Download cleaning report (txt)",
             data=report_text,
             file_name=f"cleaning_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
             mime="text/plain",
