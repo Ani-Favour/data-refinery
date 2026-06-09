@@ -4,11 +4,9 @@ import pandas as pd
 import numpy as np
 import os
 import re
-import traceback
 from datetime import datetime
-import io
 
-# --- Paths (optional; used when processing folders) ---
+# --- Paths ---
 RAW_FOLDER = "raw_data"
 CLEANED_FOLDER = "cleaned_data"
 REPORTS_FOLDER = "reports"
@@ -16,174 +14,167 @@ os.makedirs(RAW_FOLDER, exist_ok=True)
 os.makedirs(CLEANED_FOLDER, exist_ok=True)
 os.makedirs(REPORTS_FOLDER, exist_ok=True)
 
-# ---------- Cleaning helpers (same logic as your script) ----------
+# ---------- Cleaning helpers ----------
+def sanitize_filename(name):
+    return re.sub(r"[<>:\"/\\|?*]+", "_", name).strip()
+
+
 def clean_column_names(df):
     df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
     return df
 
-def clean_customer_id(df):
-    df['customer_id'] = pd.to_numeric(df['customer_id'], errors='coerce')
-    before = len(df)
-    df = df.dropna(subset=['customer_id'])
-    df['customer_id'] = df['customer_id'].astype(int)
-    removed = before - len(df)
-    return df, removed
 
-def clean_loan_amount(df):
-    if 'loan_amount' not in df.columns:
-        return df
-    df['loan_amount'] = df['loan_amount'].astype(str).str.replace(r"[^0-9.-]", "", regex=True)
-    df['loan_amount'] = pd.to_numeric(df['loan_amount'], errors='coerce')
-    df.loc[df['loan_amount'] <= 0, 'loan_amount'] = np.nan
+def standardize_missing_values(df):
+    null_values = ["", " ", "na", "n/a", "nan", "none", "null", "undefined"]
+    return df.replace(null_values, np.nan)
+
+
+def strip_string_columns(df):
+    object_cols = df.select_dtypes(include=["object"]).columns
+    for col in object_cols:
+        df[col] = df[col].astype(str).str.strip()
+        df.loc[df[col] == "", col] = np.nan
     return df
 
-def clean_income(df):
-    if 'customer_income' not in df.columns:
-        return df
-    df['customer_income'] = df['customer_income'].astype(str).str.replace(r"[^0-9.-]", "", regex=True)
-    df['customer_income'] = pd.to_numeric(df['customer_income'], errors='coerce')
-    df.loc[df['customer_income'] < 10000, 'customer_income'] = np.nan
-    return df
 
-def clean_loan_status(df):
-    if 'loan_status' not in df.columns:
-        return df
-    valid_status = {
-        "paid": "paid", "payed": "paid", "settled": "paid", "completed": "paid",
-        "unpaid": "unpaid", "owing": "unpaid", "overdue": "unpaid", "pending": "unpaid"
-    }
-    df['loan_status'] = df['loan_status'].astype(str).str.strip().str.lower().map(valid_status)
-    return df
+def convert_numeric_columns(df):
+    converted = []
+    for col in df.columns:
+        if df[col].dtype == object:
+            cleaned = (
+                df[col]
+                .astype(str)
+                .str.replace(",", "", regex=False)
+                .str.replace(r"[^0-9.\-]", "", regex=True)
+            )
+            numeric = pd.to_numeric(cleaned, errors="coerce")
+            non_null = df[col].notna().sum()
+            valid = numeric.notna().sum()
+            if non_null > 0 and valid / non_null >= 0.65:
+                df[col] = numeric
+                converted.append(col)
+    return df, converted
 
-def clean_dates(df):
-    if 'repayment_date' not in df.columns:
-        return df, 0
-    removed = 0
-    def fix_date(x):
-        nonlocal removed
-        d = pd.to_datetime(x, errors='coerce')
-        if pd.isna(d):
-            removed += 1
-            return pd.NaT
-        if d > pd.to_datetime("today"):
-            removed += 1
-            return pd.NaT
-        return d
-    df['repayment_date'] = df['repayment_date'].apply(fix_date)
-    return df, removed
+
+def convert_date_columns(df):
+    converted = {}
+    for col in df.columns:
+        if df[col].dtype == object:
+            parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
+            non_null = df[col].notna().sum()
+            valid = parsed.notna().sum()
+            if non_null > 0 and valid / non_null >= 0.65:
+                df[col] = parsed
+                converted[col] = non_null - valid
+    return df, converted
+
 
 def remove_duplicates(df):
     before = len(df)
     df = df.drop_duplicates()
     return df, before - len(df)
 
+
 def create_report_text(stats):
-    lines = ["=== MICROFINANCE DATA CLEANING REPORT ===", ""]
-    for k, v in stats.items():
-        lines.append(f"{k}: {v}")
+    lines = ["=== GENERAL DATA CLEANING REPORT ===", ""]
+    for key, value in stats.items():
+        lines.append(f"{key}: {value}")
     return "\n".join(lines)
 
+
 # ---------- App UI ----------
-st.set_page_config(page_title="Microfinance Data Cleaner", layout="wide")
-st.title("Microfinance Data Cleaner — Streamlit App")
+st.set_page_config(page_title="General Data Cleaner", layout="wide")
+st.title("General Data Cleaner — Single-Click Data Cleaning")
 
-st.markdown("Upload one or more CSV/Excel files, or let the app clean files in the `raw_data/` folder.")
+st.markdown(
+    "This app cleans raw datasets automatically. Upload CSV/XLSX files or place them into `raw_data/`, then click the button to clean all files in one step."
+)
 
-# Choose input mode
 input_mode = st.radio("Input mode", ("Upload files (recommended)", "Process files in raw_data folder"))
 
 uploaded_files = None
 if input_mode == "Upload files (recommended)":
-    uploaded_files = st.file_uploader("Upload CSV or Excel files", type=["csv", "xlsx"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "Upload CSV or Excel files",
+        type=["csv", "xlsx"],
+        accept_multiple_files=True,
+    )
 
-# Run button (1-click)
-run = st.button("Run Data Cleaner (one click)")
+run = st.button("Run Data Cleaner (single click)")
 
 if run:
     summary_rows = []
     overall_stats = {
-        "Removed invalid IDs": 0,
-        "Invalid date entries removed": 0,
+        "Files processed": 0,
         "Duplicate rows removed": 0,
-        "Files processed": 0
+        "Columns converted to numeric": 0,
+        "Columns converted to dates": 0,
+        "Files saved": 0,
     }
 
     files_to_process = []
-
     if input_mode == "Upload files (recommended)":
         if not uploaded_files:
             st.error("Please upload at least one file or switch to folder mode.")
         else:
-            for f in uploaded_files:
-                # read file into DataFrame
+            for uploaded in uploaded_files:
                 try:
-                    if f.name.lower().endswith(".csv"):
-                        df = pd.read_csv(f)
+                    if uploaded.name.lower().endswith(".csv"):
+                        df = pd.read_csv(uploaded)
                     else:
-                        df = pd.read_excel(f)
-                    files_to_process.append((f.name, df))
+                        df = pd.read_excel(uploaded)
+                    files_to_process.append((uploaded.name, df))
                 except Exception as e:
-                    st.error(f"Failed to read {f.name}: {e}")
+                    st.error(f"Failed to read {uploaded.name}: {e}")
     else:
-        # process all csv/xlsx files in RAW_FOLDER
-        for fname in os.listdir(RAW_FOLDER):
-            if fname.lower().endswith((".csv", ".xlsx")):
-                path = os.path.join(RAW_FOLDER, fname)
-                try:
-                    if fname.lower().endswith(".csv"):
-                        df = pd.read_csv(path, encoding="latin-1")
-                    else:
-                        df = pd.read_excel(path)
-                    files_to_process.append((fname, df))
-                except Exception as e:
-                    st.error(f"Failed to read {fname}: {e}")
+        raw_files = [f for f in os.listdir(RAW_FOLDER) if f.lower().endswith((".csv", ".xlsx"))]
+        if not raw_files:
+            st.warning("No files found in the raw_data folder.")
+        for fname in raw_files:
+            path = os.path.join(RAW_FOLDER, fname)
+            try:
+                if fname.lower().endswith(".csv"):
+                    df = pd.read_csv(path, encoding="latin-1")
+                else:
+                    df = pd.read_excel(path)
+                files_to_process.append((fname, df))
+            except Exception as e:
+                st.error(f"Failed to read {fname}: {e}")
 
     if files_to_process:
         progress_bar = st.progress(0)
-        def sanitize_filename(name):
-            return re.sub(r'[<>:"/\\|?*]', '_', name).strip()
-
         for i, (fname, df) in enumerate(files_to_process, start=1):
             overall_stats["Files processed"] += 1
-            original_rows = len(df)
+            rows_before = len(df)
 
-            try:
-                df = clean_column_names(df)
+            df = clean_column_names(df)
+            df = standardize_missing_values(df)
+            df = strip_string_columns(df)
+            df, numeric_cols = convert_numeric_columns(df)
+            df, date_cols = convert_date_columns(df)
+            df, removed_dupes = remove_duplicates(df)
+            df = df.reset_index(drop=True)
 
-                df, removed_ids = clean_customer_id(df)
-                overall_stats["Removed invalid IDs"] += removed_ids
+            cleaned_name = f"cleaned_{sanitize_filename(fname.rsplit('.', 1)[0])}.csv"
+            cleaned_path = os.path.join(CLEANED_FOLDER, cleaned_name)
+            df.to_csv(cleaned_path, index=False)
 
-                df = clean_loan_amount(df)
-                df = clean_income(df)
-                df = clean_loan_status(df)
+            overall_stats["Duplicate rows removed"] += removed_dupes
+            overall_stats["Columns converted to numeric"] += len(numeric_cols)
+            overall_stats["Columns converted to dates"] += len(date_cols)
+            overall_stats["Files saved"] += 1
 
-                df, bad_dates = clean_dates(df)
-                overall_stats["Invalid date entries removed"] += bad_dates
-
-                df, removed_dupes = remove_duplicates(df)
-                overall_stats["Duplicate rows removed"] += removed_dupes
-
-                df = df.reset_index(drop=True)
-
-                # Save cleaned file
-                cleaned_name = f"cleaned_{sanitize_filename(fname.rsplit('.',1)[0])}.csv"
-                cleaned_path = os.path.join(CLEANED_FOLDER, cleaned_name)
-                df.to_csv(cleaned_path, index=False)
-
-                # Store a small preview
-                summary_rows.append({
+            summary_rows.append(
+                {
                     "file": fname,
-                    "rows_before": original_rows,
+                    "rows_before": rows_before,
                     "rows_after": len(df),
-                    "removed_ids": removed_ids,
-                    "bad_dates": bad_dates,
-                    "removed_dupes": removed_dupes,
-                    "cleaned_path": cleaned_path
-                })
-
-            except Exception as e:
-                st.error(f"Error processing {fname}: {e}")
-                st.error(traceback.format_exc())
+                    "numeric_columns": ", ".join(numeric_cols) if numeric_cols else "-",
+                    "date_columns": ", ".join(date_cols.keys()) if date_cols else "-",
+                    "duplicates_removed": removed_dupes,
+                    "cleaned_path": cleaned_path,
+                }
+            )
 
             progress_bar.progress(i / len(files_to_process))
 
@@ -194,20 +185,23 @@ if run:
         st.subheader("Overall stats")
         st.json(overall_stats)
 
-        # Allow user to download cleaned files and report
         st.markdown("### Download cleaned files")
-        for r in summary_rows:
-            with open(r["cleaned_path"], "rb") as f:
+        for row in summary_rows:
+            with open(row["cleaned_path"], "rb") as f:
                 data_bytes = f.read()
-            st.download_button(label=f"Download {os.path.basename(r['cleaned_path'])}",
-                               data=data_bytes,
-                               file_name=os.path.basename(r['cleaned_path']),
-                               mime="text/csv")
+            st.download_button(
+                label=f"Download {os.path.basename(row['cleaned_path'])}",
+                data=data_bytes,
+                file_name=os.path.basename(row["cleaned_path"]),
+                mime="text/csv",
+            )
 
         report_text = create_report_text(overall_stats)
-        st.download_button(label="Download cleaning report (txt)",
-                           data=report_text,
-                           file_name=f"cleaning_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                           mime="text/plain")
+        st.download_button(
+            label="Download cleaning report (txt)",
+            data=report_text,
+            file_name=f"cleaning_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain",
+        )
     else:
-        st.warning("No files to process. Upload files or place files into the raw_data folder.")
+        st.warning("No files were processed. Upload files or add data to the raw_data folder.")

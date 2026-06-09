@@ -1,6 +1,6 @@
-# Microfinance Data Cleaner
+# General Data Cleaner
 
-A simple Streamlit app for cleaning microfinance loan datasets.
+A Streamlit app for cleaning raw data files automatically. This tool can process general CSV and Excel datasets using one-click cleaning rules.
 
 ## Project structure
 
@@ -26,6 +26,18 @@ streamlit run app.py
 ```
 
 Then open the app in your browser at `http://localhost:8501`.
+
+## Publish to GitHub
+
+If you already created a GitHub repository, connect it and push:
+
+```powershell
+git remote add origin https://github.com/<your-username>/<repo-name>.git
+git branch -M main
+git push -u origin main
+```
+
+If you still need to create the repo, do that on GitHub first, then run the commands above.
 
 ## How to use
 
