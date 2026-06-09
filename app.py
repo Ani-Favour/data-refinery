@@ -19,30 +19,50 @@ def sanitize_filename(name):
     return re.sub(r"[<>:\"/\\|?*]+", "_", name).strip()
 
 
+def make_unique_column_names(columns):
+    counts = {}
+    unique_names = []
+    for col in columns:
+        base = col if col else "column"
+        if base in counts:
+            counts[base] += 1
+            unique_names.append(f"{base}_{counts[base]}")
+        else:
+            counts[base] = 0
+            unique_names.append(base)
+    return unique_names
+
+
 def clean_column_names(df):
-    df.columns = (
-        df.columns
-        .astype(str)
+    cleaned = (
+        df.columns.astype(str)
         .str.strip()
         .str.lower()
         .str.replace(r"[^0-9a-zA-Z_]+", "_", regex=True)
         .str.replace(r"_+", "_", regex=True)
         .str.strip("_")
     )
+    df.columns = make_unique_column_names(cleaned)
     return df
 
 
 def standardize_missing_values(df):
-    null_values = ["na", "n/a", "nan", "none", "null", "undefined"]
+    null_values = ["na", "n/a", "nan", "none", "null", "undefined", "missing", "not available", "unknown"]
     cleaned = df.replace(null_values, np.nan, regex=False)
-    cleaned = cleaned.replace(r"^\s*$", np.nan, regex=True)
+    cleaned = cleaned.replace(r"^(?:\s+|-|--|na|n/a|not available|unknown|missing|none|null|undefined)$", np.nan, regex=True)
     return cleaned
 
 
 def strip_string_columns(df):
     object_cols = df.select_dtypes(include=["object"]).columns
     for col in object_cols:
-        df[col] = df[col].astype(str).str.strip()
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.replace(r"[\t\n\r]+", " ", regex=True)
+            .str.replace(r"\s+", " ", regex=True)
+            .str.strip()
+        )
         df.loc[df[col] == "", col] = np.nan
     return df
 
@@ -65,20 +85,20 @@ BOOLEAN_MAP = {
 }
 
 
-def normalize_boolean_columns(df):
+def normalize_boolean_columns(df, threshold=0.65):
     converted = []
     for col in df.select_dtypes(include=["object"]).columns:
         cleaned = df[col].astype(str).str.strip().str.lower()
         mapped = cleaned.map(BOOLEAN_MAP).where(cleaned.isin(BOOLEAN_MAP.keys()), np.nan)
         non_null = df[col].notna().sum()
         valid = mapped.notna().sum()
-        if non_null > 0 and valid / non_null >= 0.65:
+        if non_null > 0 and valid / non_null >= threshold:
             df[col] = mapped
             converted.append(col)
     return df, converted
 
 
-def convert_numeric_columns(df):
+def convert_numeric_columns(df, threshold=0.65):
     converted = []
     for col in df.columns:
         if df[col].dtype == object:
@@ -94,20 +114,20 @@ def convert_numeric_columns(df):
             numeric = pd.to_numeric(cleaned, errors="coerce")
             non_null = df[col].notna().sum()
             valid = numeric.notna().sum()
-            if non_null > 0 and valid / non_null >= 0.65:
+            if non_null > 0 and valid / non_null >= threshold:
                 df[col] = numeric
                 converted.append(col)
     return df, converted
 
 
-def convert_date_columns(df):
+def convert_date_columns(df, threshold=0.65):
     converted = {}
     for col in df.columns:
         if df[col].dtype == object or np.issubdtype(df[col].dtype, np.number):
             parsed = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
             non_null = df[col].notna().sum()
             valid = parsed.notna().sum()
-            if non_null > 0 and valid / non_null >= 0.65:
+            if non_null > 0 and valid / non_null >= threshold:
                 df[col] = parsed
                 converted[col] = non_null - valid
     return df, converted
@@ -117,6 +137,29 @@ def drop_empty_columns(df):
     before = len(df.columns)
     df = df.dropna(axis=1, how="all")
     return df, before - len(df.columns)
+
+
+def read_data_file(path):
+    if path.lower().endswith(".csv"):
+        try:
+            return pd.read_csv(path, encoding="utf-8")
+        except Exception:
+            return pd.read_csv(path, encoding="latin-1")
+    if path.lower().endswith((".xlsx", ".xls")):
+        return pd.read_excel(path)
+    raise ValueError("Unsupported file type")
+
+
+def clean_dataframe(df, threshold=0.65):
+    df = clean_column_names(df)
+    df = standardize_missing_values(df)
+    df = strip_string_columns(df)
+    df, bool_cols = normalize_boolean_columns(df, threshold)
+    df, numeric_cols = convert_numeric_columns(df, threshold)
+    df, date_cols = convert_date_columns(df, threshold)
+    df, dropped_cols = drop_empty_columns(df)
+    df, removed_dupes = remove_duplicates(df)
+    return df, bool_cols, numeric_cols, date_cols, dropped_cols, removed_dupes
 
 
 def remove_duplicates(df):
@@ -136,6 +179,7 @@ def create_report_text(stats):
 st.set_page_config(page_title="DataRefinery", layout="wide")
 
 theme_choice = st.sidebar.selectbox("UI theme", ["Light", "Dark"], index=0)
+threshold = st.sidebar.slider("Auto-convert confidence (%)", 50, 95, 65, step=5)
 
 theme_class = "theme-dark" if theme_choice == "Dark" else "theme-light"
 
@@ -200,7 +244,18 @@ with st.sidebar:
     st.markdown("**Sample data available**")
     st.markdown("- `microfinance_sample.csv`\n- `general_sample.csv`\n- `sample_data/` folder for examples")
     st.markdown("---")
+    st.text(f"Auto-convert threshold: {threshold}%")
     st.write("This tool standardizes columns, normalizes missing values, converts data types, and removes duplicate rows.")
+    st.markdown("---")
+    raw_files = [f for f in os.listdir(RAW_FOLDER) if f.lower().endswith((".csv", ".xlsx", ".xls"))]
+    if raw_files:
+        st.markdown("**Files detected in raw_data:**")
+        for fname in raw_files[:8]:
+            st.write(f"• {fname}")
+        if len(raw_files) > 8:
+            st.write(f"...and {len(raw_files) - 8} more files")
+    else:
+        st.info("Drop raw CSV/XLSX files into raw_data/ for batch processing.")
 
 input_mode = st.radio("Input mode", ("Upload files (recommended)", "Process files in raw_data folder"))
 
@@ -259,16 +314,13 @@ if run:
                 except Exception as e:
                     st.error(f"Failed to read {uploaded.name}: {e}")
     else:
-        raw_files = [f for f in os.listdir(RAW_FOLDER) if f.lower().endswith((".csv", ".xlsx"))]
+        raw_files = [f for f in os.listdir(RAW_FOLDER) if f.lower().endswith((".csv", ".xlsx", ".xls"))]
         if not raw_files:
             st.warning("No files found in the raw_data folder.")
         for fname in raw_files:
             path = os.path.join(RAW_FOLDER, fname)
             try:
-                if fname.lower().endswith(".csv"):
-                    df = pd.read_csv(path, encoding="latin-1")
-                else:
-                    df = pd.read_excel(path)
+                df = read_data_file(path)
                 files_to_process.append((fname, df))
             except Exception as e:
                 st.error(f"Failed to read {fname}: {e}")
@@ -279,14 +331,7 @@ if run:
             overall_stats["Files processed"] += 1
             rows_before = len(df)
 
-            df = clean_column_names(df)
-            df = standardize_missing_values(df)
-            df = strip_string_columns(df)
-            df, bool_cols = normalize_boolean_columns(df)
-            df, numeric_cols = convert_numeric_columns(df)
-            df, date_cols = convert_date_columns(df)
-            df, dropped_cols = drop_empty_columns(df)
-            df, removed_dupes = remove_duplicates(df)
+            df, bool_cols, numeric_cols, date_cols, dropped_cols, removed_dupes = clean_dataframe(df, threshold / 100)
             df = df.reset_index(drop=True)
 
             cleaned_name = f"cleaned_{sanitize_filename(fname.rsplit('.', 1)[0])}.csv"
@@ -313,10 +358,8 @@ if run:
                     "cleaned_path": cleaned_path,
                 }
             )
-
             progress_bar.progress(i / len(files_to_process))
 
-        st.success("Cleaning finished ✅")
         metric_cols = st.columns(3)
         metric_cols[0].metric("Files processed", overall_stats["Files processed"])
         metric_cols[1].metric("Duplicate rows removed", overall_stats["Duplicate rows removed"])
